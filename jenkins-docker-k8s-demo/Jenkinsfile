@@ -38,16 +38,13 @@ pipeline {
 
         stage('Deploy to Kubernetes') {
             steps {
-                // Make sure your kubeconfig credential ID is correct
-                withCredentials([file(credentialsId: 'kubeconfig-id', variable: 'KUBECONFIG')]) {
-                    script {
-                        // Replace the image in deployment.yaml dynamically
-                        sh """
-                            sed -i 's|image:.*|image: ${IMAGE_NAME}:${IMAGE_TAG}|' jenkins-docker-k8s-demo/k8s/deployment.yaml
-                            kubectl apply -f jenkins-docker-k8s-demo/k8s/deployment.yaml
-                            kubectl apply -f jenkins-docker-k8s-demo/k8s/service.yaml
-                        """
-                    }
+                script {
+                    // Replace the image in deployment.yaml dynamically
+                    sh """
+                        sed -i 's|image:.*|image: ${IMAGE_NAME}:${IMAGE_TAG}|' jenkins-docker-k8s-demo/k8s/deployment.yaml
+                        kubectl apply -f jenkins-docker-k8s-demo/k8s/deployment.yaml
+                        kubectl apply -f jenkins-docker-k8s-demo/k8s/service.yaml
+                    """
                 }
             }
         }
