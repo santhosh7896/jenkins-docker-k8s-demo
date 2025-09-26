@@ -2,55 +2,35 @@ pipeline {
     agent any
 
     environment {
-        DOCKER_IMAGE_NAME = "demo-app"
-        K8S_MANIFEST_PATH = "jenkins-docker-k8s-demo/k8s"
+        DOCKER_HUB_USERNAME = credentials('dockerhub-username')  // Docker Hub username
+        DOCKER_HUB_PASSWORD = credentials('dockerhub-password')  // Docker Hub password
+        IMAGE_NAME = "santhosh7896/demo-app"
     }
 
     stages {
+
         stage('Checkout Code') {
             steps {
-                git(
-                    url: 'https://github.com/santhosh7896/jenkins-docker-k8s-demo.git',
-                    credentialsId: 'github-credentials',
-                    branch: 'master'
-                )
+                git credentialsId: 'github-credentials', url: 'https://github.com/santhosh7896/jenkins-docker-k8s-demo.git', branch: 'master'
             }
         }
 
         stage('Build Docker Image') {
             steps {
                 script {
-                    // Use Git commit hash as image tag
+                    // Use short git commit hash as image tag
                     IMAGE_TAG = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
-                }
-
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'docker-hub-creds', 
-                        usernameVariable: 'DOCKER_USER', 
-                        passwordVariable: 'DOCKER_PASS'
-                    )
-                ]) {
-                    sh """
-                        echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
-                        docker build -t $DOCKER_USER/$DOCKER_IMAGE_NAME:$IMAGE_TAG -f jenkins-docker-k8s-demo/Dockerfile jenkins-docker-k8s-demo/
-                    """
+                    sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} -f jenkins-docker-k8s-demo/Dockerfile jenkins-docker-k8s-demo/"
                 }
             }
         }
 
         stage('Push Docker Image') {
             steps {
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'docker-hub-creds', 
-                        usernameVariable: 'DOCKER_USER', 
-                        passwordVariable: 'DOCKER_PASS'
-                    )
-                ]) {
+                withCredentials([string(credentialsId: 'dockerhub-password', variable: 'DOCKER_PASS')]) {
                     sh """
-                        echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
-                        docker push $DOCKER_USER/$DOCKER_IMAGE_NAME:$IMAGE_TAG
+                        echo $DOCKER_PASS | docker login -u $DOCKER_HUB_USERNAME --password-stdin
+                        docker push ${IMAGE_NAME}:${IMAGE_TAG}
                     """
                 }
             }
@@ -58,11 +38,16 @@ pipeline {
 
         stage('Deploy to Kubernetes') {
             steps {
+                // Make sure your kubeconfig credential ID is correct
                 withCredentials([file(credentialsId: 'kubeconfig-id', variable: 'KUBECONFIG')]) {
-                    sh """
-                        kubectl apply -f $K8S_MANIFEST_PATH/deployment.yaml
-                        kubectl apply -f $K8S_MANIFEST_PATH/service.yaml
-                    """
+                    script {
+                        // Replace the image in deployment.yaml dynamically
+                        sh """
+                            sed -i 's|image:.*|image: ${IMAGE_NAME}:${IMAGE_TAG}|' jenkins-docker-k8s-demo/k8s/deployment.yaml
+                            kubectl apply -f jenkins-docker-k8s-demo/k8s/deployment.yaml
+                            kubectl apply -f jenkins-docker-k8s-demo/k8s/service.yaml
+                        """
+                    }
                 }
             }
         }
@@ -70,7 +55,7 @@ pipeline {
 
     post {
         success {
-            echo "Pipeline succeeded! Image pushed: $DOCKER_USER/$DOCKER_IMAGE_NAME:$IMAGE_TAG"
+            echo "Pipeline finished successfully. Docker image pushed and deployed to Kubernetes!"
         }
         failure {
             echo "Pipeline failed. Check logs for details."
