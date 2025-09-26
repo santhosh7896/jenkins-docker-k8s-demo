@@ -2,9 +2,8 @@ pipeline {
     agent any
 
     environment {
-        // Docker Hub credentials (Username + PAT stored in Jenkins)
-        DOCKER_HUB_USERNAME = credentials('docker-hub-creds')  // ID of Docker Hub credentials
-        DOCKER_HUB_PASSWORD = credentials('docker-hub-creds')  // Same credentials ID
+        DOCKER_IMAGE_NAME = "demo-app"
+        K8S_MANIFEST_PATH = "jenkins-docker-k8s-demo/k8s"
     }
 
     stages {
@@ -12,7 +11,7 @@ pipeline {
             steps {
                 git(
                     url: 'https://github.com/santhosh7896/jenkins-docker-k8s-demo.git',
-                    credentialsId: 'github-credentials',  // GitHub personal access token stored in Jenkins
+                    credentialsId: 'github-credentials',
                     branch: 'master'
                 )
             }
@@ -20,26 +19,50 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                sh """
-                    docker build -t ${DOCKER_HUB_USERNAME}/demo-app:latest -f jenkins-docker-k8s-demo/Dockerfile jenkins-docker-k8s-demo/
-                """
+                script {
+                    // Use Git commit hash as image tag
+                    IMAGE_TAG = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+                }
+
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'docker-hub-creds', 
+                        usernameVariable: 'DOCKER_USER', 
+                        passwordVariable: 'DOCKER_PASS'
+                    )
+                ]) {
+                    sh """
+                        echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+                        docker build -t $DOCKER_USER/$DOCKER_IMAGE_NAME:$IMAGE_TAG -f jenkins-docker-k8s-demo/Dockerfile jenkins-docker-k8s-demo/
+                    """
+                }
             }
         }
 
-        stage('Push to Docker Hub') {
+        stage('Push Docker Image') {
             steps {
-                sh """
-                    echo ${DOCKER_HUB_PASSWORD} | docker login -u ${DOCKER_HUB_USERNAME} --password-stdin
-                    docker push ${DOCKER_HUB_USERNAME}/demo-app:latest
-                """
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'docker-hub-creds', 
+                        usernameVariable: 'DOCKER_USER', 
+                        passwordVariable: 'DOCKER_PASS'
+                    )
+                ]) {
+                    sh """
+                        echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+                        docker push $DOCKER_USER/$DOCKER_IMAGE_NAME:$IMAGE_TAG
+                    """
+                }
             }
         }
 
         stage('Deploy to Kubernetes') {
             steps {
                 withCredentials([file(credentialsId: 'kubeconfig-id', variable: 'KUBECONFIG')]) {
-                    sh 'kubectl apply -f jenkins-docker-k8s-demo/k8s/deployment.yaml'
-                    sh 'kubectl apply -f jenkins-docker-k8s-demo/k8s/service.yaml'
+                    sh """
+                        kubectl apply -f $K8S_MANIFEST_PATH/deployment.yaml
+                        kubectl apply -f $K8S_MANIFEST_PATH/service.yaml
+                    """
                 }
             }
         }
@@ -47,11 +70,10 @@ pipeline {
 
     post {
         success {
-            echo "Pipeline finished successfully! Docker image pushed and deployed to Kubernetes."
+            echo "Pipeline succeeded! Image pushed: $DOCKER_USER/$DOCKER_IMAGE_NAME:$IMAGE_TAG"
         }
         failure {
             echo "Pipeline failed. Check logs for details."
         }
     }
 }
-
